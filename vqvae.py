@@ -1,17 +1,15 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-#from torch import distributed as dist_fn
+import numpy as np
 
 class Quantize(nn.Module):
     def __init__(self, dim, n_embed, decay=0.99, eps=1e-5):
         super().__init__()
-
         self.dim = dim
         self.n_embed = n_embed
         self.decay = decay
         self.eps = eps
-
         embed = torch.randn(dim, n_embed)
         self.register_buffer("embed", embed)
         self.register_buffer("cluster_size", torch.zeros(n_embed))
@@ -32,18 +30,10 @@ class Quantize(nn.Module):
         if self.training:
             embed_onehot_sum = embed_onehot.sum(0)
             embed_sum = flatten.transpose(0, 1) @ embed_onehot
-            
-            #dist_fn.all_reduce(embed_onehot_sum)
-            #dist_fn.all_reduce(embed_sum)
-
-            self.cluster_size.data.mul_(self.decay).add_(
-                embed_onehot_sum, alpha=1 - self.decay
-            )
+            self.cluster_size.data.mul_(self.decay).add_(embed_onehot_sum, alpha=1 - self.decay)
             self.embed_avg.data.mul_(self.decay).add_(embed_sum, alpha=1 - self.decay)
             n = self.cluster_size.sum()
-            cluster_size = (
-                (self.cluster_size + self.eps) / (n + self.n_embed * self.eps) * n
-            )
+            cluster_size = (self.cluster_size + self.eps) / (n + self.n_embed * self.eps) * n
             embed_normalized = self.embed_avg / cluster_size.unsqueeze(0)
             self.embed.data.copy_(embed_normalized)
 
@@ -55,11 +45,9 @@ class Quantize(nn.Module):
     def embed_code(self, embed_id):
         return F.embedding(embed_id, self.embed.transpose(0, 1))
 
-
 class ResBlock(nn.Module):
     def __init__(self, in_channel, channel):
         super().__init__()
-
         self.conv = nn.Sequential(
             nn.ReLU(),
             nn.Conv2d(in_channel, channel, 3, padding=1),
@@ -70,14 +58,11 @@ class ResBlock(nn.Module):
     def forward(self, input):
         out = self.conv(input)
         out += input
-
         return out
-
 
 class Encoder(nn.Module):
     def __init__(self, in_channel, channel, n_res_block, n_res_channel, stride):
         super().__init__()
-
         if stride == 4:
             blocks = [
                 nn.Conv2d(in_channel, channel // 2, 4, stride=2, padding=1),
@@ -86,7 +71,6 @@ class Encoder(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Conv2d(channel, channel, 3, padding=1),
             ]
-
         elif stride == 2:
             blocks = [
                 nn.Conv2d(in_channel, channel // 2, 4, stride=2, padding=1),
@@ -98,19 +82,14 @@ class Encoder(nn.Module):
             blocks.append(ResBlock(channel, n_res_channel))
 
         blocks.append(nn.ReLU(inplace=True))
-
         self.blocks = nn.Sequential(*blocks)
 
     def forward(self, input):
         return self.blocks(input)
 
-
 class Decoder(nn.Module):
-    def __init__(
-        self, in_channel, out_channel, channel, n_res_block, n_res_channel, stride
-    ):
+    def __init__(self, in_channel, out_channel, channel, n_res_block, n_res_channel, stride):
         super().__init__()
-
         blocks = [nn.Conv2d(in_channel, channel, 3, padding=1)]
 
         for i in range(n_res_block):
@@ -119,16 +98,11 @@ class Decoder(nn.Module):
         blocks.append(nn.ReLU(inplace=True))
 
         if stride == 4:
-            blocks.extend(
-                [
-                    nn.ConvTranspose2d(channel, channel // 2, 4, stride=2, padding=1),
-                    nn.ReLU(inplace=True),
-                    nn.ConvTranspose2d(
-                        channel // 2, out_channel, 4, stride=2, padding=1
-                    ),
-                ]
-            )
-
+            blocks.extend([
+                nn.ConvTranspose2d(channel, channel // 2, 4, stride=2, padding=1),
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(channel // 2, out_channel, 4, stride=2, padding=1),
+            ])
         elif stride == 2:
             blocks.append(
                 nn.ConvTranspose2d(channel, out_channel, 4, stride=2, padding=1)
@@ -139,45 +113,22 @@ class Decoder(nn.Module):
     def forward(self, input):
         return self.blocks(input)
 
-
 class VQVAE(nn.Module):
-    def __init__(
-        self,
-        in_channel=3,
-        channel=128,
-        n_res_block=2,
-        n_res_channel=32,
-        embed_dim=64,
-        n_embed=512,
-        decay=0.99,
-    ):
+    def __init__(self, in_channel=3, channel=128, n_res_block=2, n_res_channel=32, embed_dim=64, n_embed=512, decay=0.99):
         super().__init__()
-
         self.enc_b = Encoder(in_channel, channel, n_res_block, n_res_channel, stride=4)
         self.enc_t = Encoder(channel, channel, n_res_block, n_res_channel, stride=2)
         self.quantize_conv_t = nn.Conv2d(channel, embed_dim, 1)
         self.quantize_t = Quantize(embed_dim, n_embed)
-        self.dec_t = Decoder(
-            embed_dim, embed_dim, channel, n_res_block, n_res_channel, stride=2
-        )
+        self.dec_t = Decoder(embed_dim, embed_dim, channel, n_res_block, n_res_channel, stride=2)
         self.quantize_conv_b = nn.Conv2d(embed_dim + channel, embed_dim, 1)
         self.quantize_b = Quantize(embed_dim, n_embed)
-        self.upsample_t = nn.ConvTranspose2d(
-            embed_dim, embed_dim, 4, stride=2, padding=1
-        )
-        self.dec = Decoder(
-            embed_dim + embed_dim,
-            in_channel,
-            channel,
-            n_res_block,
-            n_res_channel,
-            stride=4,
-        )
+        self.upsample_t = nn.ConvTranspose2d(embed_dim, embed_dim, 4, stride=2, padding=1)
+        self.dec = Decoder(embed_dim + embed_dim, in_channel, channel, n_res_block, n_res_channel, stride=4)
 
     def forward(self, input):
         quant_t, quant_b, diff, _, _ = self.encode(input)
         dec = self.decode(quant_t, quant_b)
-
         return dec, diff
 
     def encode(self, input):
@@ -203,7 +154,6 @@ class VQVAE(nn.Module):
         upsample_t = self.upsample_t(quant_t)
         quant = torch.cat([upsample_t, quant_b], 1)
         dec = self.dec(quant)
-
         return dec
 
     def decode_code(self, code_t, code_b):
@@ -211,7 +161,19 @@ class VQVAE(nn.Module):
         quant_t = quant_t.permute(0, 3, 1, 2)
         quant_b = self.quantize_b.embed_code(code_b)
         quant_b = quant_b.permute(0, 3, 1, 2)
-
         dec = self.decode(quant_t, quant_b)
-
         return dec
+
+    def generate(self, num_samples, device):
+        """Generate new samples from the trained model."""
+        # Use a normal distribution to sample latent codes
+        code_t = torch.randn(num_samples, 16, 16).to(device)
+        code_b = torch.randn(num_samples, 32, 32).to(device)
+        
+        # Ensure latent codes are within valid embedding indices range
+        code_t = torch.clamp(code_t, 0, self.quantize_t.n_embed - 1)
+        code_b = torch.clamp(code_b, 0, self.quantize_b.n_embed - 1)
+
+        # Decode the latent codes to images
+        samples = self.decode_code(code_t.long(), code_b.long())
+        return samples
