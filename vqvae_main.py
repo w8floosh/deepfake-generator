@@ -16,13 +16,14 @@ from CustomDataset import LatentSpaceDataset
 from tqdm import tqdm
 
 class ImageDataset(Dataset):
-    def __init__(self, img_dir, transform=None):
+    def __init__(self, img_dir, len, transform=None ):
         self.img_dir = img_dir
         self.transform = transform
-        self.img_files = [f"{str(i).zfill(5)}.jpg" for i in range(10000)]
+        self.len = len
+        self.img_files = [f"{str(i).zfill(5)}.jpg" for i in range(self.len)]
         
     def __len__(self):
-        return len(self.img_files)
+        return self.len
     
     def __getitem__(self, idx):
         img_path = os.path.join(self.img_dir, self.img_files[idx])
@@ -79,8 +80,6 @@ def show_images(images, nrow=1):
 
 def train_pixelsnail(train_loader, model, type, optimizer):
 
-    total_loss = 0.0
-    total_accuracy = 0.0
     loader = tqdm(train_loader)
     criterion = nn.CrossEntropyLoss()
 
@@ -88,12 +87,12 @@ def train_pixelsnail(train_loader, model, type, optimizer):
         model.zero_grad()
         
         if type == 'top':
-            top = top.squeeze()
+            #top = top.squeeze()
             target = top
             out, _ = model(top)
 
         else:
-            bottom = bottom.squeeze()
+            #bottom = bottom.squeeze()
             target = bottom
             out, _ = model(bottom, condition=top)
 
@@ -106,10 +105,7 @@ def train_pixelsnail(train_loader, model, type, optimizer):
         correct = (pred == target).float()
         accuracy = correct.sum() / target.numel()
         
-        total_loss += loss.item()
-        total_accuracy+= accuracy
-    return total_loss/ len(train_loader), total_accuracy/ len(train_loader)
-
+    return loss, accuracy
 
 def main():
 
@@ -125,9 +121,9 @@ def main():
 ])
     img_dir = 'C:/Users/sabry/Downloads/Dataset/celeba_hq_256'
 
-    dataset = ImageDataset(img_dir=img_dir, transform=transform)
-    train_size = 7000  # Number of samples for training
-    test_size = len(dataset) - train_size  # Remaining samples for testing
+    dataset = ImageDataset(img_dir=img_dir, len=10000, transform=transform)
+    train_size = int(dataset.len * 0.7) # Number of samples for training
+    test_size = dataset.len - train_size  # Remaining samples for testing
     train_dataset = torch.utils.data.Subset(dataset, range(train_size))
     test_dataset = torch.utils.data.Subset(dataset, range(train_size, train_size + test_size))
     batch_size = 64
@@ -135,7 +131,7 @@ def main():
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,num_workers=2)
     
     #pretrained_weights = torch.load('C:/Users/sabry/Downloads/vqvae_560.pt')
-    pretrained_weights = torch.load('./vqvae_560.pt', map_location=torch.device('cpu'))
+    pretrained_weights = torch.load('./vqvae_epoch_10.pt', map_location=torch.device('cpu'))
     model = VQVAE()
     model.load_state_dict(pretrained_weights)
 
@@ -154,32 +150,37 @@ def main():
             with open('losses.txt', 'a') as f:
                 f.write(f"Epoch [{epoch+1}/{num_epochs}], Loss: {train_loss}, Validation Loss: {val_loss}\n")
     elif args.mode =="train" and args.model =="pixelsnail":
-        data_loader = DataLoader(train_dataset, batch_size=1, shuffle=False)
+    
+        data_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
         top_latents = []
         bottom_latents = []
 
-        for i, image in enumerate(data_loader):
-            with torch.no_grad():
-                _, _, _, id_t, id_b = model.encode(image)
-                
-                top_latents.append(id_t.numpy())
-                bottom_latents.append(id_b.numpy())
-
-        top_latents = np.array(top_latents)
-        bottom_latents = np.array(bottom_latents)
-
-        latent_space_dataset = LatentSpaceDataset(top_latents, bottom_latents)
-        latent_space_loader = DataLoader(latent_space_dataset, batch_size=64, shuffle=True)
-         
         models ={ "top": PixelSNAIL([32, 32],512,256,5,4,4,128,dropout=0.1,n_out_res_block=2), 
                  "bottom": PixelSNAIL([64, 64],512,256,5,4,4,128,attention=False,dropout=0.1,n_cond_res_block=3, cond_res_channel=256)
                 }
+        
         optimizer = optim.Adam(model.parameters(), lr=0.001)
         num_epochs = 10
         for space in ["top","bottom"]:
             for epoch in range(num_epochs):
-                pixelsnail_loss, accuracy = train_pixelsnail(latent_space_loader, models[space], space, optimizer)
-                print(f'{space} - Epoch [{epoch+1}/{num_epochs}], Loss: {pixelsnail_loss:.4f}, Accuracy: {accuracy}')
+                total_loss = 0.0
+                total_accuracy = 0.0
+                for i, image in enumerate(data_loader):
+                    with torch.no_grad():
+                        _, _, _, top_latents, bottom_latents = model.encode(image)
+
+                    top_latents = np.array(top_latents)
+                    bottom_latents = np.array(bottom_latents)
+                    
+                    latent_space_dataset = LatentSpaceDataset(top_latents, bottom_latents)
+                    latent_space_loader = DataLoader(latent_space_dataset, batch_size=64, shuffle=True)
+
+                    pixelsnail_loss, accuracy = train_pixelsnail(latent_space_loader, models[space], space, optimizer)
+                    total_loss+= pixelsnail_loss
+                    total_accuracy+= accuracy
+                    
+                num_batch = dataset.len / batch_size
+                print(f'{space} - Epoch [{epoch+1}/{num_epochs}], Loss: {pixelsnail_loss / num_batch:.4f}, Accuracy: {accuracy / num_batch}')
                 with open('pixelsnail_losses.txt', 'a') as f:
                     f.write(f"{space} - Epoch [{epoch+1}/{num_epochs}], Loss: {pixelsnail_loss}, Accuracy: {accuracy}\n")
 
