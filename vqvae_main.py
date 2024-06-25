@@ -125,10 +125,10 @@ def main():
     train_size = int(dataset.len * 0.7) # Number of samples for training
     test_size = dataset.len - train_size  # Remaining samples for testing
     train_dataset = torch.utils.data.Subset(dataset, range(train_size))
-    test_dataset = torch.utils.data.Subset(dataset, range(train_size, train_size + test_size))
+    val_dataset = torch.utils.data.Subset(dataset, range(train_size, train_size + test_size))
     batch_size = 64
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,num_workers=2)
+    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,num_workers=2)
     
     #pretrained_weights = torch.load('C:/Users/sabry/Downloads/vqvae_560.pt')
     pretrained_weights = torch.load('./vqvae_epoch_10.pt', map_location=torch.device('cpu'))
@@ -137,14 +137,14 @@ def main():
 
     if args.mode == "train" and args.model == "vqvae":
         reconstruction_criterion = nn.MSELoss()
-        optimizer = optim.Adam(model.parameters(), lr=0.001)
+        optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
-        num_epochs = 0
+        num_epochs = 10
         
         for epoch in range(num_epochs):
             train_loss = training(model, train_dataloader, reconstruction_criterion,optimizer,epoch)
             print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {train_loss}")
-            val_loss = validate(model, test_dataloader, reconstruction_criterion)
+            val_loss = validate(model, val_dataloader, reconstruction_criterion)
             print(f"Epoch [{epoch+1}/{num_epochs}], Validation Loss: {val_loss}")
             
             with open('losses.txt', 'a') as f:
@@ -155,13 +155,13 @@ def main():
         top_latents = []
         bottom_latents = []
 
-        models ={ "top": PixelSNAIL([32, 32],512,256,5,4,4,128,dropout=0.1,n_out_res_block=2), 
-                 "bottom": PixelSNAIL([64, 64],512,256,5,4,4,128,attention=False,dropout=0.1,n_cond_res_block=3, cond_res_channel=256)
+        models ={ "top": PixelSNAIL([32, 32],512,256,5,4,6,256,dropout=0.1,n_out_res_block=3), 
+                 "bottom": PixelSNAIL([64, 64],512,256,5,4,6,256,attention=False,dropout=0.1,n_cond_res_block=4, cond_res_channel=256)
                 }
         
-        optimizer = optim.Adam(model.parameters(), lr=0.001)
         num_epochs = 10
         for space in ["top","bottom"]:
+            optimizer = optim.Adam(models[space].parameters(), lr=0.001)
             for epoch in range(num_epochs):
                 total_loss = 0.0
                 total_accuracy = 0.0
@@ -218,7 +218,7 @@ def evaluate():
     model.load_state_dict(torch.load('vqvae_epoch_10.pt', map_location=torch.device('cpu')))  # Load your trained model
     model.eval()
     img_dir = 'C:/Users/sabry/Downloads/Dataset/celeba_hq_256'
-    dataset = ImageDataset(img_dir=img_dir, transform=transform)
+    dataset = ImageDataset(img_dir=img_dir, len=2, transform=transform)
     dataloader = DataLoader(dataset, batch_size=2, shuffle=False, num_workers=2)
     
     dataiter = iter(dataloader)
@@ -235,5 +235,5 @@ def evaluate():
     show_side_by_side(images, reconstructed)
 
 if __name__ == "__main__":
-    main()
-    #evaluate()
+    #main()
+    evaluate()
