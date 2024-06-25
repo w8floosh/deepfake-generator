@@ -119,7 +119,7 @@ def main():
     transforms.ToTensor(),
     transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
-    img_dir = 'C:/Users/sabry/Downloads/Dataset/celeba_hq_256'
+    img_dir = 'C:/Users/markn/Downloads/Dataset/celeba_hq_256'
 
     dataset = ImageDataset(img_dir=img_dir, len=10000, transform=transform)
     train_size = int(dataset.len * 0.7) # Number of samples for training
@@ -176,6 +176,8 @@ def main():
                     latent_space_loader = DataLoader(latent_space_dataset, batch_size=64, shuffle=True)
 
                     pixelsnail_loss, accuracy = train_pixelsnail(latent_space_loader, models[space], space, optimizer)
+                    print('loss: ', pixelsnail_loss)
+                    print('accuracy: ', accuracy)
                     total_loss+= pixelsnail_loss
                     total_accuracy+= accuracy
                     
