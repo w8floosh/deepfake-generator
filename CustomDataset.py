@@ -15,3 +15,20 @@ class LatentSpaceDataset(Dataset):
         top_latent = torch.tensor(self.top_latents[idx]).long()
         bottom_latent = torch.tensor(self.bottom_latents[idx]).long()
         return top_latent, bottom_latent
+    
+class ImageDataset(Dataset):
+    def __init__(self, img_dir, len, transform=None ):
+        self.img_dir = img_dir
+        self.transform = transform
+        self.len = len
+        self.img_files = [f"{str(i).zfill(5)}.jpg" for i in range(self.len)]
+
+    def __len__(self):
+        return self.len
+
+    def __getitem__(self, idx):
+        img_path = os.path.join(self.img_dir, self.img_files[idx])
+        image = Image.open(img_path).convert("RGB")
+        if self.transform:
+            image = self.transform(image)
+        return image
