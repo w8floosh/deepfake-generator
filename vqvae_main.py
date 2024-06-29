@@ -102,7 +102,6 @@ def train_pixelcnn(train_loader, vqvae, model, space, optimizer, loss_op, epoch,
     train_loss = 0.
     for i, image in enumerate(train_loader):
         image = image.to(device)
-        print("image size",image.size(0))
         with torch.no_grad():
             _, _, _, top_latents, bottom_latents = vqvae.encode(image)
         if space == "top":
@@ -113,13 +112,13 @@ def train_pixelcnn(train_loader, vqvae, model, space, optimizer, loss_op, epoch,
         input = normalize(input)
         input = Variable(input)
         output = model(input)
-    
+        
         loss = loss_op(input, output)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         train_loss += loss.item() * image.size(0)
-        print(loss.item())
+        #print(loss.item())
 
     avg_loss = train_loss / len(train_loader.dataset)
     torch.save(model.state_dict(), f'pixelcnn_epoch_{epoch+1}.pt')
@@ -148,8 +147,9 @@ def val_pixelcnn(val_loader, vqvae, model, space, loss_op, device):
     return avg_loss
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    #device = torch.device('cpu')
     parser = argparse.ArgumentParser(description='Train or test the models')
-    parser.add_argument('--mode', choices=['train', 'test', 'generate'], help='Specify whether to train or test the models or generate model results')
+    parser.add_argument('--mode', choices=['train','generate'], help='Specify whether to train or generate model results')
     parser.add_argument('--model', choices=['vqvae', 'pixelcnn'],help='Specify the model')
     args = parser.parse_args()
 
@@ -165,16 +165,15 @@ def main():
     val_size = dataset.len - train_size  
     train_dataset = torch.utils.data.Subset(dataset, range(train_size))
     val_dataset = torch.utils.data.Subset(dataset, range(train_size, train_size + val_size))
-    batch_size = 32
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
-    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,num_workers=2)
 
-    #pretrained_weights = torch.load('C:/Users/sabry/Downloads/vqvae_560.pt')
-    pretrained_weights = torch.load('./vqvae_epoch_10.pt', map_location=torch.device('cuda'))
+    pretrained_weights = torch.load('./vqvae_epoch_15.pt', map_location=torch.device('cpu'))
     vqvae = VQVAE().to(device)
     vqvae.load_state_dict(pretrained_weights)
 
     if args.mode == "train" and args.model == "vqvae":
+        batch_size = 32
+        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,num_workers=2)
         reconstruction_criterion = nn.MSELoss()
         optimizer = optim.Adam(vqvae.parameters(), lr=0.0001)
 
@@ -300,6 +299,7 @@ def prova(vqvae):
     img_dir = 'C:/Users/sabry/Downloads/Dataset/celeba_hq_256'
     dataset = ImageDataset(img_dir=img_dir, len=2, transform=transform)
     data_loader = DataLoader(dataset, batch_size=2, shuffle=False)
+    loss_op   = lambda real, fake : discretized_mix_logistic_loss_1d(real, fake)
     for i, images in enumerate(data_loader):
         with torch.no_grad():
             _, _, _, top_latents, bottom_latents = vqvae.encode(images)
@@ -318,6 +318,9 @@ def prova(vqvae):
 
             top_output = top_model(top_var)
             bottom_output = bottom_model(bottom_var)
+
+            loss = loss_op(top_var, top_output)
+            print("Loss: ", loss)
             print(top_output.shape)
             print(bottom_output.shape)
             top_output = sample_from_discretized_mix_logistic_1d(top_output, nr_logistic_mix)
@@ -351,6 +354,6 @@ if __name__ == "__main__":
     main()
     #evaluate_vqvae()
     # vqvae = VQVAE()
-    # vqvae.load_state_dict(torch.load('vqvae_epoch_10.pt', map_location=torch.device('cuda')))  # Load your trained model
+    # vqvae.load_state_dict(torch.load('vqvae_epoch_15.pt', map_location=torch.device('cuda')))  # Load your trained model
     # vqvae.eval()
     # prova(vqvae)

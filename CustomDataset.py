@@ -1,6 +1,8 @@
 import torch
 import numpy as np
+import os
 from torch.utils.data import Dataset
+from PIL import Image
 
 class LatentSpaceDataset(Dataset):
     def __init__(self, top_latents, bottom_latents):
