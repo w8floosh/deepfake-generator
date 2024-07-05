@@ -16,30 +16,38 @@ def generate_images(pickle, n, latent_dim, truncation_psi, truncation_cutoff, de
     Returns:
     - images: A list of generated images
     """
-    generator = pickle["G"].to(device)
+    generator = pickle["G_ema"].to(device)
     generator.eval()
-    
-    # Generate latent noise vectors
-    noise = torch.randn(n, latent_dim).to(device)
-    
-    # Generate images
-    with torch.no_grad():
-        generated_images = generator(noise, None, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, force_fp32=True)
-    
-    # Move images to CPU and convert to numpy array for visualization
-    generated_images = generated_images.cpu().numpy()
-    
-    # Normalize images to [0, 1] range if necessary
-    generated_images = (generated_images + 1) / 2
-    
-    for i, img in enumerate(generated_images):
-        # Convert image format from (C, H, W) to (H, W, C)
-        img = np.transpose(img, (1, 2, 0))
-        # Convert to uint8
-        img = (img * 255).astype(np.uint8)
-        # Save image
-        Image.fromarray(img).save(f"stylegan3/generated/generated_image_{i+1}.png")
+    batch_size = 64
+    ng = 0
+    for batch in range(np.int32(np.ceil(n / batch_size))):
+        print(f'Generated {ng} images')
 
+    # Generate latent noise vectors
+        noise = torch.randn(batch_size, latent_dim).to(device)
+        
+        # Generate images
+        with torch.no_grad():
+            # generated_images = generator(noise, None, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff, force_fp32=True)
+            generated_images = generator(noise, None, truncation_psi=truncation_psi, force_fp32=True)
+        
+        # Move images to CPU and convert to numpy array for visualization
+        generated_images = generated_images.cpu().numpy()
+        
+        # Normalize images to [0, 1] range if necessary
+        generated_images = (generated_images + 1) / 2
+        
+        for i, img in enumerate(generated_images):
+            if ng != 0 and ng / n == 0:
+                return
+            ng += 1
+            # Convert image format from (C, H, W) to (H, W, C)
+            img = np.transpose(img, (1, 2, 0))
+            # Convert to uint8
+            img = (img * 255).astype(np.uint8)
+            # Save image
+            Image.fromarray(img).save(f"stylegan3/generated/generated_image_{batch*batch_size + i+1}.jpg", "JPEG", quality=95)
+            
 
 def plot_images(images, n):
     """
