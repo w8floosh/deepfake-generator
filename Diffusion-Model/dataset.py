@@ -2,7 +2,6 @@ import os
 from torch.utils.data import Dataset
 from PIL import Image
 
-
 # Custom Dataset Class for CelebA-HQ
 class CelebAHQDataset(Dataset):
     def __init__(self, img_dir, transform=None, num_images=10000, index=0):
