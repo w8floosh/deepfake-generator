@@ -1,4 +1,5 @@
 import argparse
+from parse_logs import parse_gan_logs
 import torch
 import pickle
 import utils
@@ -11,6 +12,13 @@ import PIL
 from matplotlib import pyplot as plt
 import numpy as np
 from torch import Tensor
+import os
+
+paths = ["models", "datasets/celeba_hq_256", "D_ep_82.pth", "G_ep_82.pth", "G_ema_ep_82.pth"]
+for p in paths:
+    if not os.path.exists(p):  
+        print("Il percorso non esiste")
+        exit(0)
 
 model_config = {
         'epoch_id': 'ep_82', 
@@ -106,6 +114,7 @@ model_config = {
         'resolution': 256, 
         'n_classes': 1}
 
+
 def print_generated(gen):
     img = (gen[0].permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
     plt.imsave('img0.jpg', PIL.Image.fromarray(img.cpu().numpy(), "RGB"))
@@ -132,7 +141,7 @@ def plot_avg_epoch_data(epochs, g_adv_loss, g_pix_loss, d_real_loss, d_fake_loss
     # Set labels, title, and legend for the first subplot
     ax1.set_xlabel('epoch')
     ax1.set_ylabel('avg loss')
-    ax1.set_title('Average StyleGAN3 losses per epoch')
+    ax1.set_title('Average UNETGAN losses per epoch')
     ax1.legend(loc='upper center')
     ax1.grid(True)
 
@@ -140,44 +149,78 @@ def plot_avg_epoch_data(epochs, g_adv_loss, g_pix_loss, d_real_loss, d_fake_loss
     ax1.set_xlim(1, epochs)
 
     # Save the plot to a file
-    plt.savefig('stylegan3/gan_training_losses.png', dpi=300)
+    plt.savefig('UNETGAN_training_losses_15.png', dpi=300)
 
-def generate(batch_size):
-    device = "cpu"
-    g_weights = torch.load("C:/Users/sabry/Downloads/G_ema_ep_82.pth", map_location=torch.device('cpu'))
+def save_evolution_generations():
+    epochs = ["6","11","tuned"]
+    path = "models"
     G_ema = Generator(**{**model_config, 'skip_init':True,
-                                   'no_optim': True}).to(device)
+                                   'no_optim': True}).cuda()
+    fixed_z, _ = utils.prepare_z_y(1, 128,
+                                       model_config['n_classes'], device="cuda")
+    fixed_z.sample_()
+    for epoch in epochs:
+        generator_path = os.path.join(path, f"G_ema_epoch_{epoch}.pth")
+        weights = torch.load(generator_path, map_location=torch.device('cuda'))
+        G_ema.load_state_dict(weights)
+        G_ema.eval()
+        with torch.no_grad():
+            generated_images = G_ema(fixed_z)
+        generated_images = generated_images.cpu().numpy().transpose(0, 2, 3, 1)
+        for i, img in enumerate(generated_images):
+            plt.imshow((img * 0.5 + 0.5).clip(0, 1))
+            plt.axis('off')
+            plt.savefig(f'generated_image_epoch_{epoch}.png')
+
+def generate(n_images, batch_size, generator_path="G_ema_ep_82.pth"):
+    from PIL import Image
+    g_weights = torch.load(generator_path, map_location=torch.device('cuda'))
+    G_ema = Generator(**{**model_config, 'skip_init':True,
+                                   'no_optim': True}).cuda()
     G_ema.load_state_dict(g_weights)
     G_ema.eval()  
-    # Generate random latent vectors
-    # z = torch.randn(2, 128).to(device)
-    y = None
-    fixed_z, _ = utils.prepare_z_y(batch_size, 128,
-                                       model_config['n_classes'], device=device)
-    fixed_z.sample_()
+    n_batches = n_images // batch_size
+    for batch in range(n_batches):
+        # Prepare the latent vectors (z) for a batch of images
+        fixed_z, _ = utils.prepare_z_y(batch_size, 128, model_config['n_classes'], device="cuda")
+        fixed_z.sample_()
 
-    with torch.no_grad():
-        generated_images = G_ema(fixed_z, y)
-    generated_images = generated_images.cpu().numpy().transpose(0, 2, 3, 1)
-    return generated_images
-    # for i, img in enumerate(generated_images):
-    #     plt.imshow((img * 0.5 + 0.5).clip(0, 1))
-    #     plt.axis('off')
-    #     plt.show()
-    #     plt.savefig(f'generated_image_{i}.png')
+        # Generate images with the model
+        with torch.no_grad():
+            generated_images = G_ema(fixed_z, None)
+        generated_images = generated_images.cpu().numpy().transpose(0, 2, 3, 1)
 
-
-def tune( dataset: torch.utils.data.Dataset, generator, discriminator, epochs, batch_size, accumulation_steps=8, batch_print_interval=None, checkpoint_interval=5, **learning_params):
-    device = "cpu"
-    generator.train()
-    discriminator.train()
+        # Save each generated image
+        for i, img in enumerate(generated_images):
+            img_norm = ((img * 0.5 + 0.5).clip(0, 1) * 255).astype(np.uint8)
+            img_index = batch * batch_size + i + 1
+            Image.fromarray(img_norm).save(f"generations/generated_image_{img_index}.jpg", "JPEG", quality=95)
     
+    # fixed_z, _ = utils.prepare_z_y(n_images, 128,
+    #                                    model_config['n_classes'], device="cuda")
+    # fixed_z.sample_()
+
+    # with torch.no_grad():
+    #     generated_images = G_ema(fixed_z, None)
+    # generated_images = generated_images.cpu().numpy().transpose(0, 2, 3, 1)
+    # for i, img in enumerate(generated_images):
+    #     img_norm = ((img * 0.5 + 0.5).clip(0, 1)*255).astype(np.uint8)
+    #     # Image.fromarray(img).save(f"stylegan3/generated/generated_image_{batch*batch_size + i+1}.jpg", "JPEG", quality=95)
+    #     Image.fromarray(img_norm).save(f"generations/generated_image_{i+1}.jpg", "JPEG", quality=95)
+
+
+def tune( dataset: torch.utils.data.Dataset, generator, g_ema_path, discriminator, epochs, batch_size, accumulation_steps=8, batch_print_interval=None, checkpoint_interval=5, **learning_params):
+    #device = "cpu"
+    generator.train()
+    generator = generator.cuda()
+    discriminator.train()
     G_ema = Generator(**{**model_config, 'skip_init':True,
-                                   'no_optim': True})
+                                   'no_optim': True}).cuda()
     ema = utils.ema(generator, G_ema, model_config['ema_decay'], model_config['ema_start'])
-    g_ema_weights = torch.load("C:/Users/sabry/Downloads/G_ema_ep_82.pth", map_location=torch.device('cpu'))
+    g_ema_weights = torch.load(g_ema_path, map_location=torch.device('cuda'))
     G_ema.load_state_dict(g_ema_weights)
     G_ema.train()
+    G_ema = G_ema.cpu()
     # Define the loss functions and optimizers
     init_lr_g = learning_params.get("init_lr_g")
     init_lr_d = learning_params.get("init_lr_d")
@@ -229,8 +272,8 @@ def tune( dataset: torch.utils.data.Dataset, generator, discriminator, epochs, b
             # Train Generator
             # ------------------
             generator = generator.cuda()
-            z, _ = utils.prepare_z_y(2, 128,
-                                       model_config['n_classes'], device=device)
+            z, _ = utils.prepare_z_y(batch_size, 128,
+                                       model_config['n_classes'], device="cuda")
             z.sample_()
             y = None
             gen_imgs = generator(z,y).cuda()
@@ -261,7 +304,9 @@ def tune( dataset: torch.utils.data.Dataset, generator, discriminator, epochs, b
 
             total_g_adv_loss += a_loss.item()
             total_g_pix_loss += p_loss.item()
+            G_ema = G_ema.cuda()
             ema.update(itr)
+            G_ema = G_ema.cpu()
             # ---------------------
             # Train Discriminator
             # ---------------------
@@ -308,9 +353,9 @@ def tune( dataset: torch.utils.data.Dataset, generator, discriminator, epochs, b
             
             if (epoch > 0 and epoch % checkpoint_interval == 0):
                 #save(f"stylegan3/models/tuned_stylegan3_chk{epoch//checkpoint_interval}.pkl", pickle, generator, discriminator)
-                torch.save(generator.state_dict(), f'G_epoch_{epoch+1}.pth')
-                torch.save(discriminator.state_dict(), f'D_epoch_{epoch+1}.pth')
-                torch.save(G_ema.state_dict(), f'G_ema_epoch_{epoch+1}.pth')
+                torch.save(generator.state_dict(), f'models/G_epoch_{epoch}.pth')
+                torch.save(discriminator.state_dict(), f'models/D_epoch_{epoch}.pth')
+                torch.save(G_ema.state_dict(), f'models/G_ema_epoch_{epoch}.pth')
 
         avg_g_adv_losses.append(total_g_adv_loss / len(dataloader))
         avg_g_pix_losses.append(total_g_pix_loss / len(dataloader))
@@ -333,14 +378,34 @@ def tune( dataset: torch.utils.data.Dataset, generator, discriminator, epochs, b
 
 def main():
     #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    device = torch.device("cpu")
+    device = torch.device("cuda")
     parser = argparse.ArgumentParser(description='Parameters of the model')
-    parser.add_argument('--mode', choices=['train','generate'], help='Specify whether to train or generate model results')
-    parser.add_argument('--path', help='Specify the path of the model')
+    parser.add_argument('--mode', choices=['train','generate', 'parse'], help='Specify whether to train model, generate images or parse model results')
+    parser.add_argument('--resume', type=int, required=False)
+    #parser.add_argument('--path', help='Specify the path of the model')
     args = parser.parse_args()
 
-    d_weights = torch.load(args.path + "/D_ep_82.pth", map_location=torch.device('cpu'))
-    g_weights = torch.load(args.path + "/G_ep_82.pth", map_location=torch.device('cpu'))
+    epoch_resume = args.resume or None
+    num_epochs = 15 - epoch_resume if epoch_resume else 15
+
+    if args.mode == 'parse':
+        avgs_d_real, avgs_d_fake, avgs_g_adv, avgs_g_pix = parse_gan_logs("logs.txt")
+        plot_avg_epoch_data(
+            num_epochs, 
+            avgs_g_adv, 
+            avgs_g_pix, 
+            avgs_d_real, 
+            avgs_d_fake
+        )
+        return
+          
+
+
+    D_path = f"models/D_epoch_{args.resume}.pth" if args.resume else "D_ep_82.pth"
+    G_path = f"models/G_epoch_{args.resume}.pth" if args.resume else "G_ep_82.pth"
+    G_ema_path = f"models/G_ema_epoch_{args.resume}.pth" if args.resume else "G_ema_ep_82.pth"
+    d_weights = torch.load(D_path, map_location=torch.device('cuda'))
+    g_weights = torch.load(G_path, map_location=torch.device('cuda'))
 
     G = Generator(**model_config)
     D = Unet_Discriminator(**model_config)
@@ -349,8 +414,10 @@ def main():
     D.load_state_dict(d_weights)
         
     if (args.mode =="generate"):
-        batch_size = 2
-        imgs = generate(batch_size)
+        batch_size = 16
+        n_images = 10000
+        imgs = generate(n_images, batch_size, generator_path=G_ema_path)
+        print("gen")
     else:
         transform = transforms.Compose(
             [
@@ -363,25 +430,26 @@ def main():
         )
         
         dataset = CelebAHQDataset(
-            img_dir="C:/Users/sabry/Downloads/Dataset/celeba_hq_256", transform=transform, num_images=10
+            #img_dir="C:/Users/sabry/Downloads/Dataset/celeba_hq_256", transform=transform, num_images=10000
+            img_dir="datasets/celeba_hq_256", transform=transform, num_images=10000
         )
-        batch_size = 2
-        num_epochs = 4
+        batch_size = 16
         tuned_generator, tuned_discriminator, tuned_G_ema= tune(
             dataset,
             G,
+            G_ema_path,
             D,
             num_epochs,
             batch_size,
-            init_lr_g=0.00001, 
-            init_lr_d=0.000015, 
-            min_lr=1e-7, 
+            init_lr_g=1e-05 if epoch_resume else 0.00001, 
+            init_lr_d=1e-07 if epoch_resume else 0.000015, 
+            min_lr=1e-7,
             lr_scale_factor=0.1,
             lr_patience=2,
         )
-        torch.save(tuned_generator.state_dict(), f'G_tuned.pth')
-        torch.save(tuned_discriminator.state_dict(), f'D_tuned.pth')
-        torch.save(tuned_G_ema.state_dict(), f'G_ema_tuned.pth')
+        torch.save(tuned_generator.state_dict(), 'models/G_tuned.pth')
+        torch.save(tuned_discriminator.state_dict(), 'models/D_tuned.pth')
+        torch.save(tuned_G_ema.state_dict(), 'models/G_ema_tuned.pth')
 
 if __name__ == "__main__":
     main()
