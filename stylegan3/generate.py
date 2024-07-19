@@ -16,9 +16,9 @@ def generate_images(pickle, n, latent_dim, truncation_psi, truncation_cutoff, de
     Returns:
     - images: A list of generated images
     """
-    generator = pickle["G_ema"].to(device)
+    generator = pickle["G"].to(device)
     generator.eval()
-    batch_size = 64
+    batch_size = 8
     ng = 0
     for batch in range(np.int32(np.ceil(n / batch_size))):
         print(f'Generated {ng} images')

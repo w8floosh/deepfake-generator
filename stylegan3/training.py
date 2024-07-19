@@ -15,7 +15,7 @@ def tune(
     checkpoint_interval=5,
     **learning_params
 ):
-    generator = pickle["G_ema"]
+    generator = pickle["G"]
     discriminator = pickle["D"]
 
     generator.train()
@@ -173,7 +173,7 @@ def tune(
 
 
 def save(path, pkl, generator, discriminator):
-    pkl["G_ema"] = generator
+    pkl["G"] = generator
     pkl["D"] = discriminator
     print("Saving the model")
     with open(path, 'wb') as file:
