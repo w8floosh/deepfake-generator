@@ -1,2 +1,2 @@
 # deepfake-generator
- Deepfake generation and classification using H64 and Quick96 models
+ Deepfake generation and classification using UNetGAN and StyleGAN3 models
