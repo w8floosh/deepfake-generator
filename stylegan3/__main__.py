@@ -13,7 +13,7 @@ num_epochs = 10
 batch_size = 16
 z_dim = 512
 c_dim = 0  # No conditioning
-truncation_psi = 0.5
+truncation_psi = 0.7
 truncation_cutoff = 8
 
 parser = ArgumentParser(prog="stylegan3")
